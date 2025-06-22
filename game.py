@@ -23,6 +23,9 @@ DARK_GRAY = (50, 50, 50)
 SKY_BLUE = (135, 206, 235)
 PURPLE = (128, 0, 128)
 
+# --- Highscore feature (Feature 1) ---
+highscore = 0
+
 def generate_valid_grid():
     for _ in range(10):
         grid = [[0 if random.random() > 0.3 else 1 for _ in range(GRID_SIZE)] for _ in range(GRID_SIZE)]
@@ -84,8 +87,13 @@ police_stuck_counter = 0
 last_thief_pos = thief_pos.copy()
 last_police_pos = police_pos.copy()
 
+# --- Pause overlay button area (Feature 6) ---
+resume_button_rect = None
+mainmenu_button_rect = None
+
 def setup():
     global screen, clock, font, title_font, button_rect, difficulty_rects, click_sound, catch_sound
+    global resume_button_rect, mainmenu_button_rect
     pygame.init()
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     pygame.display.set_caption("Catch the Thief")
@@ -99,6 +107,9 @@ def setup():
         "Medium": pygame.Rect(WIDTH // 2 - 50, HEIGHT - 250, 100, 40),
         "Hard": pygame.Rect(WIDTH // 2 + 50, HEIGHT - 250, 100, 40)
     }
+    # Button rectangles for pause menu
+    resume_button_rect = pygame.Rect(WIDTH // 2 - 100, HEIGHT // 2 + 40, 200, 50)
+    mainmenu_button_rect = pygame.Rect(WIDTH // 2 - 100, HEIGHT // 2 + 110, 200, 50)
     
     if platform.system() != "Emscripten":
         try:
@@ -310,16 +321,35 @@ def draw_entities(path):
     text = font.render(f"Diff: {difficulty} | Dist: {distance} | Time: {elapsed}s | Mode: {mode} | {power_up_text} | {warning_text}", True, BLACK)
     screen.blit(text, (10, HEIGHT - 30))
     
+    # --- Draw highscore at the top left (Feature 1) ---
+    hs_text = font.render(f"Highscore: {highscore}", True, YELLOW)
+    screen.blit(hs_text, (10, 10))
+
     if paused:
-        overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 128))
-        screen.blit(overlay, (0, 0))
-        text = title_font.render("Paused", True, WHITE)
-        text_rect = text.get_rect(center=(WIDTH // 2, HEIGHT // 2))
-        pygame.draw.rect(screen, BLACK, text_rect.inflate(20, 20))
-        screen.blit(text, text_rect)
+        draw_pause_overlay()
+        
+def draw_pause_overlay():
+    # --- Pause menu overlay (Feature 6) ---
+    overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    overlay.fill((0, 0, 0, 170))
+    screen.blit(overlay, (0, 0))
+    text = title_font.render("Paused", True, WHITE)
+    text_rect = text.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 60))
+    pygame.draw.rect(screen, BLACK, text_rect.inflate(20, 20))
+    screen.blit(text, text_rect)
+    # Resume Button
+    pygame.draw.rect(screen, GREEN, resume_button_rect, border_radius=10)
+    resume_text = font.render("Resume", True, BLACK)
+    resume_text_rect = resume_text.get_rect(center=resume_button_rect.center)
+    screen.blit(resume_text, resume_text_rect)
+    # Main Menu Button
+    pygame.draw.rect(screen, GRAY, mainmenu_button_rect, border_radius=10)
+    menu_text = font.render("Main Menu", True, BLACK)
+    menu_text_rect = menu_text.get_rect(center=mainmenu_button_rect.center)
+    screen.blit(menu_text, menu_text_rect)
 
 def draw_game_over():
+    global highscore
     if platform.system() != "Emscripten":
         print("Drawing game over screen")
     
@@ -341,6 +371,14 @@ def draw_game_over():
     pygame.draw.rect(screen, BLACK, score_rect.inflate(20, 20))
     screen.blit(score_text, score_rect)
     
+    # --- Update and display highscore (Feature 1) ---
+    score_final = max(10000 - elapsed * 100, 0)
+    if score_final > highscore:
+        highscore = score_final
+    hs_text = font.render(f"Highscore: {highscore}", True, YELLOW)
+    hs_rect = hs_text.get_rect(center=(WIDTH // 2, HEIGHT * 2 // 3 + 40))
+    screen.blit(hs_text, hs_rect)
+
     overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
     overlay.fill((0, 0, 0, 128))
     screen.blit(overlay, (0, 0))
@@ -349,6 +387,7 @@ def draw_game_over():
 
 async def update_loop():
     global police_pos, thief_pos, caught, game_state, difficulty, start_time, score, police_auto, paused, power_ups, power_up_active, power_up_timer, move_interval, invalid_move_timer, city_grid, grid_warning, thief_stuck_counter, police_stuck_counter, last_thief_pos, last_police_pos
+    global highscore
     move_timer = 0
     police_path = []
     
@@ -358,8 +397,8 @@ async def update_loop():
                 pygame.quit()
                 return
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                mouse_pos = event.pos
                 if game_state == "welcome":
-                    mouse_pos = event.pos
                     for diff, rect in difficulty_rects.items():
                         if rect.collidepoint(mouse_pos):
                             difficulty = diff
@@ -370,6 +409,31 @@ async def update_loop():
                         start_time = pygame.time.get_ticks()
                         if click_sound:
                             click_sound.play()
+                elif game_state == "playing" and paused:
+                    # --- Pause menu buttons (Feature 6) ---
+                    if resume_button_rect.collidepoint(mouse_pos):
+                        paused = False
+                    elif mainmenu_button_rect.collidepoint(mouse_pos):
+                        game_state = "welcome"
+                        police_pos = [0, 0]
+                        thief_pos = [GRID_SIZE-1, GRID_SIZE-1]
+                        caught = False
+                        police_auto = True
+                        paused = False
+                        power_up_active = False
+                        move_interval = 0.5
+                        city_grid, valid_grid = generate_valid_grid()
+                        power_ups.clear()
+                        road_cells = [(x, y) for x in range(GRID_SIZE) for y in range(GRID_SIZE) if city_grid[x][y] == 0 and (x, y) not in [(0, 0), (GRID_SIZE-1, GRID_SIZE-1)]]
+                        for _ in range(3):
+                            if road_cells:
+                                x, y = random.choice(road_cells)
+                                city_grid[x][y] = 2
+                                power_ups.append((x, y))
+                                road_cells.remove((x, y))
+                        thief_stuck_counter = 0
+                        police_stuck_counter = 0
+                # No mouse interaction for game_over (auto return to welcome after 3s)
             if event.type == pygame.KEYDOWN and game_state == "playing":
                 if event.key == pygame.K_p:
                     paused = not paused
@@ -483,6 +547,8 @@ async def update_loop():
                     game_state = "game_over"
                     elapsed = (pygame.time.get_ticks() - start_time) // 1000
                     score = max(10000 - elapsed * 100, 0)
+                    if score > highscore:  # --- Update highscore if beaten (Feature 1) ---
+                        highscore = score
                     if catch_sound:
                         catch_sound.play()
                     if platform.system() != "Emscripten":
